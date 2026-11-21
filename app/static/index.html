@@ -21,6 +21,9 @@
   .msg { max-width: 80%; padding: 10px 12px; border-radius: 10px; white-space: pre-wrap; }
   .you { align-self: flex-end; background: var(--you); }
   .agent { align-self: flex-start; background: var(--agent); }
+  .tag { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+         color: var(--muted); margin-bottom: 3px; }
+  .body { white-space: pre-wrap; }
   .hint { color: var(--muted); margin: auto; text-align: center; }
   form { display: flex; gap: 8px; margin-top: 12px; }
   input { flex: 1; font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
@@ -50,10 +53,16 @@ function add(cls, text) {
   document.getElementById("hint")?.remove();
   const div = document.createElement("div");
   div.className = "msg " + cls;
-  div.textContent = text;
+  const tag = document.createElement("div");
+  tag.className = "tag";
+  tag.textContent = cls === "you" ? "Tenant" : "Agent";
+  const body = document.createElement("div");
+  body.className = "body";
+  body.textContent = text;
+  div.append(tag, body);
   log.append(div);
   log.scrollTop = log.scrollHeight;
-  return div;
+  return body;
 }
 
 document.getElementById("form").addEventListener("submit", async (e) => {
