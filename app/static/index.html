@@ -29,6 +29,8 @@
   .suggestions button { font-weight: 400; font-size: 13px; padding: 6px 12px; border-radius: 999px;
                         background: var(--panel); color: var(--text); border: 1px solid var(--border); }
   .suggestions button:hover { border-color: var(--accent); }
+  .suggestions[hidden] { display: none; }
+  .row-label { font-size: 12px; color: var(--muted); align-self: center; margin-right: 2px; }
   form { display: flex; gap: 8px; margin-top: 12px; }
   input { flex: 1; font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
           background: var(--panel); color: var(--text); }
@@ -41,7 +43,8 @@
 <div class="chat">
   <h1>Viewing Booking Agent</h1>
   <div class="log" id="log"><div class="hint" id="hint">Ask to book or cancel a property viewing.</div></div>
-  <div class="suggestions" id="suggestions"></div>
+  <div class="suggestions" id="recent" hidden><span class="row-label">Your previous questions:</span></div>
+  <div class="suggestions" id="suggestions"><span class="row-label">Try:</span></div>
   <form id="form">
     <input id="text" placeholder="e.g. Can I see 14 Oak Road on Saturday morning?" autocomplete="off" aria-label="Message">
     <button id="send">Send</button>
@@ -78,13 +81,33 @@ const SUGGESTIONS = [
   "Can I see 99 Banana Street tomorrow at 10?",
   "I'd like to book a viewing",
 ];
-for (const q of SUGGESTIONS) {
+function chip(text) {
   const b = document.createElement("button");
   b.type = "button";
-  b.textContent = q;
-  b.onclick = () => { if (!button.disabled) send(q); };
-  document.getElementById("suggestions").append(b);
+  b.textContent = text;
+  b.onclick = () => { if (!button.disabled) send(text); };
+  return b;
 }
+for (const q of SUGGESTIONS) document.getElementById("suggestions").append(chip(q));
+
+// Questions you typed yourself, kept in this browser so they survive a refresh.
+const RECENT_KEY = "booking-agent-recent";
+function loadRecent() {
+  try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch { return []; }
+}
+function remember(text) {
+  if (SUGGESTIONS.includes(text)) return;
+  const list = [text, ...loadRecent().filter(q => q !== text)].slice(0, 6);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch {}
+  renderRecent(list);
+}
+function renderRecent(list = loadRecent()) {
+  const row = document.getElementById("recent");
+  row.querySelectorAll("button").forEach(b => b.remove());
+  for (const q of list) row.append(chip(q));
+  row.hidden = list.length === 0;
+}
+renderRecent();
 
 document.getElementById("form").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -94,6 +117,7 @@ document.getElementById("form").addEventListener("submit", (e) => {
 async function send(text) {
   text = text.trim();
   if (!text) return;
+  remember(text);
   add("you", text);
   input.value = "";
   button.disabled = true;
