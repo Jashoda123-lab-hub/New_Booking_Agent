@@ -186,6 +186,50 @@ def test_vague_request_gets_a_clarifying_question(client, llm):
     assert client.get("/bookings").json() == []
 
 
+def test_yes_book_it_after_an_availability_answer(client, llm):
+    """Real conversation from the web page: the follow-up lost the property and day."""
+    out = send(client, "guest", llm.when("Is 14 Oak Road free on Tuesday?",
+                                         intent="question", property="14 Oak Road", date="2026-11-24"))
+    assert out["action"] == "answered"
+
+    out = send(client, "guest", llm.when("yes book at 10:00", intent="book", preferred_time="10:00"))
+    assert out["action"] == "booked"
+    assert (out["booking"]["address"], out["booking"]["starts_at"]) == ("14 Oak Road", "2026-11-24 10:00")
+
+
+def test_taking_an_offered_alternative(client, llm):
+    msg = llm.when("Book 14 Oak Road Saturday at 10am please",
+                   intent="book", property="14 Oak Road", date="2026-11-28", preferred_time="10:00")
+    send(client, "alice", msg)
+    assert send(client, "bob", msg)["action"] == "no_availability"
+    out = send(client, "bob", llm.when("11 is fine then", intent="book", preferred_time="11:00"))
+    assert out["action"] == "booked"
+    assert out["booking"]["starts_at"] == "2026-11-28 11:00"
+
+
+def test_context_does_not_leak_into_cancel_or_other_property(client, llm):
+    llm.when("Book 14 Oak Road Saturday at 10am please",
+             intent="book", property="14 Oak Road", date="2026-11-28", preferred_time="10:00")
+    llm.when("Book 22 Elm Street tomorrow at 4pm",
+             intent="book", property="22 Elm Street", date="2026-11-22", preferred_time="16:00")
+    send(client, "alice", "Book 14 Oak Road Saturday at 10am please")
+    send(client, "alice", "Book 22 Elm Street tomorrow at 4pm")
+    send(client, "alice", llm.when("Is 14 Oak Road free on Tuesday?",
+                                   intent="question", property="14 Oak Road", date="2026-11-24"))
+
+    # A cancel right after an Oak Road question must still ask which viewing.
+    out = send(client, "alice", llm.when("I want to cancel my viewing.", intent="cancel"))
+    assert out["action"] == "clarify"
+    assert len(client.get("/bookings").json()) == 2
+
+    # Asking about a different property starts fresh (no Tuesday carried over).
+    send(client, "carol", llm.when("Is 14 Oak Road free on Tuesday?",
+                                   intent="question", property="14 Oak Road", date="2026-11-24"))
+    out = send(client, "carol", llm.when("Can I view 7 Maple Avenue?", intent="book", property="7 Maple Avenue"))
+    assert out["action"] == "clarify"
+    assert "Tuesday" not in out["reply"]
+
+
 def test_day_but_no_time_asks_only_for_the_time(client, llm):
     out = send(client, "alice", llm.when("Can I view 7 Maple Avenue on Monday?",
                                          intent="book", property="7 Maple Avenue", date="2026-11-23"))

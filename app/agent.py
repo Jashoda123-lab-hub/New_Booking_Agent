@@ -281,10 +281,12 @@ class ViewingAgent:
         if part in TIME_OF_DAY and not (ex["earliest_time"] or ex["latest_time"]):
             ex["earliest_time"], ex["latest_time"] = TIME_OF_DAY[part]
 
-        # Merge a follow-up ("14 Oak Road") into the request we asked about.
-        if pending and (ex["intent"] in ("other", "question", pending["intent"])):
+        # Merge a follow-up ("14 Oak Road", "yes, book 10:00") into the open request.
+        if pending and self._continues(pending, ex):
             merged = dict(pending)
             merged.update({k: v for k, v in ex.items() if v is not None and k != "intent"})
+            if ex["intent"] == "book":  # "is it free?" -> "yes, book it"
+                merged["intent"] = "book"
             ex = merged
         self.pending.pop(sender, None)
         return {"extraction": ex}
@@ -390,6 +392,22 @@ class ViewingAgent:
 
     # ---- helpers ---------------------------------------------------------
 
+    def _continues(self, pending: dict, ex: dict) -> bool:
+        """Is this message a follow-up to the open request, rather than a new one?"""
+        new, old = ex["intent"], pending["intent"]
+        if new == "cancel" and old != "cancel":
+            return False  # never let a booking chat decide which viewing gets cancelled
+        if new == "book" and old == "cancel":
+            return False
+        if new not in ("other", "question", old) and not (new == "book" and old == "question"):
+            return False
+        if ex.get("property") and pending.get("property"):
+            a, b = self.tools.find_property(ex["property"]), self.tools.find_property(pending["property"])
+            if a is not None and b is not None and a["id"] != b["id"]:
+                return False  # they've moved on to a different property
+            # (if the earlier property was unknown, the new one is a correction: keep going)
+        return True
+
     def _clarify(self, ex: dict, facts: dict, prop: Optional[dict] = None) -> AgentState:
         return {"action": "clarify", "facts": facts, "property": prop, "extraction": ex}
 
@@ -432,7 +450,9 @@ class ViewingAgent:
 
     def handle(self, sender: str, message: str, now: Optional[datetime] = None) -> dict:
         state = self.graph.invoke({"sender": sender, "message": message, "now": now or self.clock()})
-        if state["action"] == "clarify":
+        # Remember the open request whenever the reply invites a follow-up:
+        # a clarifying question, a list of free times, or alternatives to a taken slot.
+        if state["action"] in ("clarify", "answered", "no_availability"):
             self.pending[sender] = state["extraction"]
         return {
             "reply": state["reply"],
