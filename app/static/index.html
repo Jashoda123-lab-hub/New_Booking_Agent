@@ -5,276 +5,79 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Viewing Booking Agent</title>
 <style>
-  :root {
-    --bg: #f6f7f9; --panel: #ffffff; --border: #e3e6eb; --text: #1b1f24; --muted: #667085;
-    --accent: #3b5bdb; --accent-text: #ffffff;
-    --tenant: #eef2ff; --agent: #e8f6ef;
-    --ok: #127a4a; --ok-bg: #dcf3e7; --warn: #9a5b00; --warn-bg: #fdf0d5;
-    --bad: #b42318; --bad-bg: #fde4e1; --info: #3b5bdb; --info-bg: #e6ebff;
-    --pill: #f1f3f6; --pill-hover: #e2e7ff;
-  }
+  :root { --bg: #f6f7f9; --panel: #fff; --border: #e3e6eb; --text: #1b1f24; --muted: #667085;
+          --accent: #3b5bdb; --accent-text: #fff; --you: #eef2ff; --agent: #e8f6ef; }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #98a2b3;
-      --accent: #6d8cff; --accent-text: #0f1115;
-      --tenant: #1f2640; --agent: #16302a;
-      --ok: #5fd39a; --ok-bg: #133326; --warn: #f5b450; --warn-bg: #3a2a10;
-      --bad: #ff8a7a; --bad-bg: #3d1712; --info: #8fa6ff; --info-bg: #1f2747;
-      --pill: #232833; --pill-hover: #2b3552;
-    }
+    :root { --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #98a2b3;
+            --accent: #6d8cff; --accent-text: #0f1115; --you: #1f2640; --agent: #16302a; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  header { padding: 18px 24px 6px; max-width: 1280px; margin: 0 auto; }
-  header h1 { margin: 0; font-size: 22px; }
-  header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
-  main { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px;
-         padding: 12px 24px 24px; max-width: 1280px; margin: 0 auto; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px 16px; } header { padding: 16px 16px 4px; } }
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
-  .panel h2 { margin: 0; font-size: 15px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .panel-head { padding: 14px 16px; border-bottom: 1px solid var(--border); }
-  .muted { color: var(--muted); font-size: 13px; font-weight: 400; }
-
-  /* chat */
-  .chat { display: flex; flex-direction: column; height: calc(100vh - 110px); min-height: 520px; }
-  .who { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
-  .who input { width: 170px; }
-  input, button { font: inherit; }
-  input[type=text] { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
-                     background: var(--bg); color: var(--text); }
-  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  .chip { border: 1px solid var(--border); background: var(--pill); color: var(--text);
-          padding: 4px 10px; border-radius: 999px; cursor: pointer; font-size: 13px; }
-  .chip:hover { background: var(--pill-hover); }
-  .chip.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
-  .log { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .empty { color: var(--muted); text-align: center; margin: auto; max-width: 340px; font-size: 14px; }
-  .msg { max-width: 82%; padding: 10px 12px; border-radius: 10px; white-space: pre-wrap; }
-  .msg .label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px;
-                display: flex; gap: 8px; align-items: center; }
-  .tenant { align-self: flex-start; background: var(--tenant); }
-  .agent { align-self: flex-end; background: var(--agent); }
-  .badge { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; letter-spacing: .02em; text-transform: none; }
-  .b-booked, .b-cancelled { color: var(--ok); background: var(--ok-bg); }
-  .b-clarify, .b-answered { color: var(--info); background: var(--info-bg); }
-  .b-no_availability, .b-none { color: var(--warn); background: var(--warn-bg); }
-  .b-error { color: var(--bad); background: var(--bad-bg); }
-  .thinking { align-self: flex-end; color: var(--muted); font-size: 13px; padding: 4px 8px; }
-  .examples { padding: 0 16px 10px; display: flex; flex-wrap: wrap; gap: 6px; }
-  .composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); }
-  .composer input { flex: 1; }
-  .send { background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px; padding: 8px 16px;
-          cursor: pointer; font-weight: 600; }
-  .send:disabled { opacity: .5; cursor: default; }
-
-  /* side */
-  .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-  .body { padding: 12px 16px 16px; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-  td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  tr:last-child td { border-bottom: 0; }
-  tr.flash td { animation: flash 2s ease-out; }
-  @keyframes flash { from { background: var(--ok-bg); } to { background: transparent; } }
-  .prop { margin-top: 14px; }
-  .prop:first-child { margin-top: 0; }
-  .prop h3 { margin: 0 0 6px; font-size: 14px; display: flex; justify-content: space-between; }
-  .day { display: flex; gap: 8px; align-items: baseline; margin: 4px 0; flex-wrap: wrap; }
-  .day .d { width: 92px; color: var(--muted); font-size: 13px; flex-shrink: 0; }
-  .slot { border: 1px solid var(--border); background: var(--pill); color: var(--text); border-radius: 6px;
-          padding: 2px 8px; font-size: 13px; cursor: pointer; font-variant-numeric: tabular-nums; }
-  .slot:hover { background: var(--pill-hover); }
-  .refresh { border: 1px solid var(--border); background: transparent; color: var(--muted); border-radius: 6px;
-             padding: 2px 8px; cursor: pointer; font-size: 12px; }
+  .chat { max-width: 720px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; padding: 16px; }
+  h1 { font-size: 20px; margin: 4px 0 12px; }
+  .log { flex: 1; overflow-y: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+         padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 80%; padding: 10px 12px; border-radius: 10px; white-space: pre-wrap; }
+  .you { align-self: flex-end; background: var(--you); }
+  .agent { align-self: flex-start; background: var(--agent); }
+  .hint { color: var(--muted); margin: auto; text-align: center; }
+  form { display: flex; gap: 8px; margin-top: 12px; }
+  input { flex: 1; font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+          background: var(--panel); color: var(--text); }
+  button { font: inherit; font-weight: 600; padding: 10px 18px; border: 0; border-radius: 8px;
+           background: var(--accent); color: var(--accent-text); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
 </style>
 </head>
 <body>
-<header>
+<div class="chat">
   <h1>Viewing Booking Agent</h1>
-  <p>Chat as a tenant. The agent reads the message, checks the database, books or cancels a slot, and replies.</p>
-</header>
-
-<main>
-  <section class="panel chat" aria-label="Chat">
-    <div class="panel-head">
-      <h2>Conversation <span class="muted" id="who-note"></span></h2>
-      <div class="who">
-        <span class="muted">Sending as</span>
-        <input type="text" id="sender" value="alice" aria-label="Sender">
-        <button class="chip" data-sender="alice">alice</button>
-        <button class="chip" data-sender="bob">bob</button>
-        <button class="chip" data-sender="carol">carol</button>
-      </div>
-    </div>
-    <div class="log" id="log"></div>
-    <div class="examples" id="examples"></div>
-    <form class="composer" id="form">
-      <input type="text" id="text" placeholder="e.g. Can I see 14 Oak Road on Saturday morning?" autocomplete="off" aria-label="Message">
-      <button class="send" id="send" type="submit">Send</button>
-    </form>
-  </section>
-
-  <div class="side">
-    <section class="panel" aria-label="Bookings">
-      <div class="panel-head"><h2>Current bookings <span class="muted" id="count"></span></h2></div>
-      <div class="body" id="bookings"></div>
-    </section>
-    <section class="panel" aria-label="Free slots">
-      <div class="panel-head">
-        <h2>Free slots <span><span class="muted">click one to request it</span> <button class="refresh" id="refresh">Refresh</button></span></h2>
-      </div>
-      <div class="body" id="slots"></div>
-    </section>
-  </div>
-</main>
+  <div class="log" id="log"><div class="hint" id="hint">Ask to book or cancel a property viewing.</div></div>
+  <form id="form">
+    <input id="text" placeholder="e.g. Can I see 14 Oak Road on Saturday morning?" autocomplete="off" aria-label="Message">
+    <button id="send">Send</button>
+  </form>
+</div>
 
 <script>
-const EXAMPLES = [
-  "Hi, can I see the flat at 14 Oak Road on Saturday morning?",
-  "Is 22 Elm Street free tomorrow at 5pm? If not, any time after 4 works.",
-  "I want to cancel my viewing.",
-  "Can I see 99 Banana Street tomorrow at 10?",
-  "I'd like to book a viewing",
-];
-const LABELS = { booked: "booked", cancelled: "cancelled", clarify: "asked a question",
-                 no_availability: "no availability", answered: "answered", none: "no action", error: "error" };
+const SENDER = "guest";
+const log = document.getElementById("log");
+const input = document.getElementById("text");
+const button = document.getElementById("send");
 
-const $ = (id) => document.getElementById(id);
-const logs = {};          // sender -> [{role, text, action}]
-let lastBookingIds = new Set();
-
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-const sender = () => $("sender").value.trim() || "guest";
-
-function fmt(startsAt) {
-  const [d, t] = startsAt.split(" ");
-  const dt = new Date(d + "T00:00:00");
-  return { day: dt.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }), time: t };
-}
-
-function renderLog() {
-  const log = $("log");
-  log.replaceChildren();
-  const items = logs[sender()] || [];
-  $("who-note").textContent = "· " + sender();
-  document.querySelectorAll(".chip[data-sender]").forEach(c => c.classList.toggle("active", c.dataset.sender === sender()));
-  if (!items.length) {
-    log.append(el("div", "empty", "No messages yet from " + sender() + ". Type a message or pick an example below."));
-  }
-  for (const m of items) {
-    const box = el("div", "msg " + m.role);
-    const label = el("div", "label", m.role === "tenant" ? "Tenant · " + sender() : "Agent");
-    if (m.action) label.append(el("span", "badge b-" + m.action, LABELS[m.action] || m.action));
-    box.append(label, el("div", "", m.text));
-    log.append(box);
-  }
-  if (items.pending) log.append(el("div", "thinking", "Agent is thinking…"));
+function add(cls, text) {
+  document.getElementById("hint")?.remove();
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  div.textContent = text;
+  log.append(div);
   log.scrollTop = log.scrollHeight;
+  return div;
 }
 
-async function send(text) {
-  text = text.trim();
+document.getElementById("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
   if (!text) return;
-  const who = sender();
-  const items = (logs[who] = logs[who] || []);
-  items.push({ role: "tenant", text });
-  items.pending = true;
-  $("send").disabled = true;
-  $("text").value = "";
-  renderLog();
+  add("you", text);
+  input.value = "";
+  button.disabled = true;
+  const pending = add("agent", "…");
   try {
     const r = await fetch("/message", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sender: who, text }),
+      body: JSON.stringify({ sender: SENDER, text }),
     });
     const data = await r.json();
-    if (!r.ok) throw new Error(data.detail ? JSON.stringify(data.detail) : r.statusText);
-    items.push({ role: "agent", text: data.reply, action: data.action });
-  } catch (err) {
-    items.push({ role: "agent", text: "Something went wrong: " + err.message, action: "error" });
-  } finally {
-    items.pending = false;
-    $("send").disabled = false;
-    renderLog();
-    refresh();
-    $("text").focus();
+    pending.textContent = r.ok ? data.reply : "Sorry, something went wrong.";
+  } catch {
+    pending.textContent = "Sorry, I couldn't reach the server.";
   }
-}
-
-async function loadBookings() {
-  const rows = await (await fetch("/bookings")).json();
-  $("count").textContent = "· " + rows.length;
-  const box = $("bookings");
-  box.replaceChildren();
-  if (!rows.length) { box.append(el("div", "muted", "No bookings yet.")); lastBookingIds = new Set(); return; }
-  const table = el("table");
-  const head = el("tr");
-  ["Property", "When", "Contact"].forEach(h => head.append(el("th", "", h)));
-  table.append(head);
-  const ids = new Set();
-  for (const b of rows) {
-    ids.add(b.booking_id);
-    const { day, time } = fmt(b.starts_at);
-    const tr = el("tr", lastBookingIds.size && !lastBookingIds.has(b.booking_id) ? "flash" : "");
-    tr.append(el("td", "", b.address), el("td", "", day + " · " + time + "–" + b.ends_at.slice(11)), el("td", "", b.contact));
-    table.append(tr);
-  }
-  lastBookingIds = ids;
-  box.append(table);
-}
-
-async function loadSlots() {
-  const props = await (await fetch("/properties")).json();
-  const box = $("slots");
-  box.replaceChildren();
-  for (const p of props) {
-    const wrap = el("div", "prop");
-    const h = el("h3", "", p.address);
-    h.append(el("span", "muted", p.free_slots.length + " free"));
-    wrap.append(h);
-    const byDay = {};
-    for (const s of p.free_slots) (byDay[s.starts_at.slice(0, 10)] = byDay[s.starts_at.slice(0, 10)] || []).push(s);
-    const days = Object.keys(byDay).sort();
-    if (!days.length) wrap.append(el("div", "muted", "No free slots."));
-    for (const d of days) {
-      const row = el("div", "day");
-      row.append(el("span", "d", fmt(byDay[d][0].starts_at).day));
-      for (const s of byDay[d]) {
-        const { day, time } = fmt(s.starts_at);
-        const b = el("button", "slot", time);
-        b.title = "Request " + p.address + " on " + day + " at " + time;
-        b.onclick = () => { $("text").value = `Can I book ${p.address} on ${day} at ${time}?`; $("text").focus(); };
-        row.append(b);
-      }
-      wrap.append(row);
-    }
-    box.append(wrap);
-  }
-}
-
-function refresh() { loadBookings().catch(console.error); loadSlots().catch(console.error); }
-
-// wiring
-for (const ex of EXAMPLES) {
-  const c = el("button", "chip", ex);
-  c.type = "button";
-  c.onclick = () => send(ex);
-  $("examples").append(c);
-}
-document.querySelectorAll(".chip[data-sender]").forEach(c => c.onclick = () => { $("sender").value = c.dataset.sender; renderLog(); });
-$("sender").addEventListener("input", renderLog);
-$("form").addEventListener("submit", (e) => { e.preventDefault(); send($("text").value); });
-$("refresh").onclick = refresh;
-
-renderLog();
-refresh();
+  button.disabled = false;
+  input.focus();
+});
+input.focus();
 </script>
 </body>
 </html>

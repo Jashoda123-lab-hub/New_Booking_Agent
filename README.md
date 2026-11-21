@@ -60,8 +60,7 @@ python -m app.reset_db                      # optional: fresh DB, 3 properties, 
 uvicorn app.main:get_app --factory --reload
 ```
 
-- **http://127.0.0.1:8000/**: a small web page. Chat as a tenant (switch between alice, bob and carol to test double
-  bookings), use the example messages from the brief, watch **Current bookings** update, and click a free slot to request it.
+- **http://127.0.0.1:8000/**: a simple chat page. Type a message and read the agent's reply.
 - **http://127.0.0.1:8000/docs**: the interactive API.
 
 ## API
@@ -85,7 +84,7 @@ Response:
 All active bookings with property, time and contact.
 
 ### `GET /properties`
-Each property with its free slots for the next 7 days (`?days=` to change). Used by the web page.
+Each property with its free slots for the next 7 days (`?days=` to change).
 
 ```bash
 curl -s -X POST localhost:8000/message -H 'Content-Type: application/json' \
@@ -138,7 +137,7 @@ app/
   tools.py     find_property, get_free_slots, book_slot, active_bookings_for, cancel_booking, list_bookings
   agent.py     LangGraph graph, LLM prompts, reply templates
   main.py      FastAPI app (POST /message, GET /bookings, GET /properties, GET /health, GET /)
-  static/      index.html: the web page (plain HTML + JS, no build step)
+  static/      index.html: simple chat page (plain HTML + JS)
   reset_db.py  recreate and seed the database
 tests/         pytest suite (fake LLM, temp DB)
 ```
