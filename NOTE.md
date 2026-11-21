@@ -14,12 +14,13 @@ fields, and it polishes the reply. **Code** picks the slot and calls the tools, 
 something the database didn't offer. Double bookings are blocked **by the database** with a partial unique
 index, and each tenant's conversation is remembered by a LangGraph checkpointer.
 
-**What I learned, and how.** LangGraph was new to me. I learned how a state graph works (nodes, edges,
-conditional routing, shared state) and how a checkpointer saves state per conversation, by reading the docs
-and running small examples with an AI coding assistant. I set up SQLite with DB Browser and tested the
-"one active booking per slot" index by hand before writing any Python. The biggest lesson: unit tests with a
-fake LLM are not enough. Running the real model exposed bugs the tests couldn't show, so I turned each one into
-a regression test.
+**What I learned, and how.** LangGraph was new to me: I learned state graphs, conditional edges and
+checkpointers from the docs and by running small examples with an AI coding assistant. With FastAPI I learned
+to define the API with Pydantic request and response models, so bad input is rejected with a 422 before it
+reaches the agent, and to test endpoints in two ways: by hand in the interactive `/docs` page, and automatically
+with FastAPI's `TestClient`. I set up SQLite with DB Browser and tested the unique index by hand before writing
+code. I also learned that unit tests with a fake LLM aren't enough: running the real model exposed bugs the
+tests couldn't show, so I turned each one into a regression test.
 
 **Where the AI tool was wrong, and how I caught it.** The first address matcher used fuzzy string
 similarity and matched **"41 Oak Road" to "14 Oak Road"**, which would book a stranger into the wrong flat. A
