@@ -31,9 +31,16 @@ evening" is now an enum the model picks and code maps to hours, and every polish
 code-drafted one (same times, same address, same outcome, questions stay questions). If the check fails, the code
 draft is sent. Both failures are now regression tests.
 
+Multi-turn conversations showed more. "Is 14 Oak Road free on Tuesday?" → "yes book at 10:00" lost the property,
+because only clarifying questions kept context. A repeated "book at 11:00" booked **10:00**, because the model also
+tagged it "morning" and the code fell back to the morning window. And once the conversation history was in the
+prompt, the model **copied an earlier address** into "I want to cancel my viewing.", so it cancelled without
+asking. Fixes: conversation memory now lives in LangGraph state saved by a SQLite checkpointer (one thread per sender,
+survives restarts, expires after 30 minutes of silence); an exact time always beats a time-of-day; and code checks
+the model's output against the message: an address only counts if the message names it, and "cancel it" only
+counts if the message says "it" or "that one". Each case is a regression test that fails on the old code.
+
 **What I'd improve with more time.**
-- Store conversation state (the half-finished request waiting on a clarifying answer) in the DB or a LangGraph
-  checkpointer, instead of in process memory, which is lost on restart and not shared across workers.
 - Time zones: times are naive local times; I'd store UTC and convert per property.
 - An evaluation set of real tenant messages run against the live LLM, to measure extraction accuracy
   (the unit tests use a fake LLM so they're deterministic).

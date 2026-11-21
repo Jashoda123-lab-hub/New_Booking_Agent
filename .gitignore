@@ -6,3 +6,6 @@ __pycache__/
 *.db
 *.sqbpro
 .DS_Store
+*.db-shm
+*.db-wal
+*.db-journal

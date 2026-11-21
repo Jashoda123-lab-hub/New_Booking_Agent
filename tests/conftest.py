@@ -28,12 +28,14 @@ class FakeLLM:
 
     def __init__(self):
         self.responses = {}
+        self.contexts = []  # what the agent told the LLM about the conversation, per call
 
     def when(self, message: str, **fields) -> str:
         self.responses[message] = Extraction(**fields)
         return message
 
     def extract(self, message, now, context=""):
+        self.contexts.append(context)
         if message not in self.responses:
             raise AssertionError(f"FakeLLM has no response for: {message!r}")
         return self.responses[message]

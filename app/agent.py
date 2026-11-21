@@ -10,6 +10,8 @@
 * Every decision that touches data (which property, which slot, whether to
   book or cancel) is made by graph code calling the tools. The LLM cannot
   book a slot that the database did not offer.
+* Conversation memory (open request, recent messages, last booking) is graph
+  state, saved per sender by a LangGraph checkpointer (SQLite in the API).
 * If the property is unknown or no time is given, the graph routes to a
   clarifying question instead of guessing.
 """
@@ -18,10 +20,11 @@ import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Literal, Optional, TypedDict
 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
-from .tools import BookingTools
+from .tools import BookingTools, mentions
 
 Intent = Literal["book", "cancel", "question", "other"]
 
@@ -50,23 +53,40 @@ class Extraction(BaseModel):
     time_of_day: Optional[Literal["morning", "afternoon", "evening"]] = Field(
         None, description="Set if the tenant names a part of the day instead of a clock time, else null."
     )
+    refers_to_last_booking: bool = Field(
+        False,
+        description="True only if the tenant points at the booking made earlier in THIS conversation with "
+        "words like 'it', 'that one', 'the one you just booked'. A general request such as "
+        "'I want to cancel my viewing' is NOT such a reference: false.",
+    )
 
 
 # Parts of the day are mapped in code, not left to the model (it skipped this in live runs).
 TIME_OF_DAY = {"morning": ("08:00", "12:00"), "afternoon": ("12:00", "17:00"), "evening": ("17:00", "21:00")}
 TIME_KEYS = ("preferred_time", "earliest_time", "latest_time")
 
+# Conversation memory settings.
+HISTORY_TURNS = 6                     # messages shown to the LLM
+CONVERSATION_TTL = timedelta(minutes=30)  # after this much silence, start fresh
+
 
 class AgentState(TypedDict, total=False):
+    # input for this turn
     sender: str
     message: str
     now: datetime
+    # per-turn working values (reset at the start of every turn)
     extraction: dict
     property: Optional[dict]
     action: str  # booked | cancelled | clarify | no_availability | answered | none
     facts: dict
     booking: Optional[dict]
     reply: str
+    # conversation memory — saved by the LangGraph checkpointer per sender (thread_id)
+    pending: Optional[dict]        # the open request a follow-up can continue
+    history: List[dict]            # recent messages [{"role": "tenant"|"agent", "text": ...}]
+    last_booking: Optional[dict]   # booking made in this conversation ("cancel it")
+    last_seen: Optional[datetime]  # for expiring stale conversations
 
 
 # --------------------------------------------------------------------- LLM
@@ -81,7 +101,10 @@ Rules:
 - "morning" / "afternoon" / "evening" -> set time_of_day.
 - "at 5pm" -> preferred_time 17:00. "any time after 4" -> earliest_time 16:00. "before 3" -> latest_time 15:00.
 - If they ask whether a time is free AND say an alternative works, the intent is book.
-- Never invent a property, date or time that is not in the message. Use null instead.
+- Short replies like "yes", "10:00 please", "the Oak Road one" continue the open request below:
+  "yes, book 10:00" is intent book; just naming a property or time is intent other.
+- Extract only what THIS message says; the system fills in the rest from the open request.
+- Never invent a property, date or time. Use null instead.
 {context}"""
 
 
@@ -258,28 +281,37 @@ def template_reply(action: str, facts: dict) -> str:
 
 
 class ViewingAgent:
-    def __init__(self, tools: BookingTools, llm, draft_with_llm: bool = True, clock=datetime.now):
+    def __init__(self, tools: BookingTools, llm, draft_with_llm: bool = True, clock=datetime.now,
+                 checkpointer=None):
         self.tools = tools
         self.llm = llm
         self.draft_with_llm = draft_with_llm
         self.clock = clock  # injectable so tests can pin "today"
-        # Partially-filled requests waiting on a clarifying answer, per sender.
-        # In-memory on purpose (see NOTE.md: would move to the DB / a checkpointer).
-        self.pending: Dict[str, dict] = {}
+        # Conversation memory lives in the graph state; the checkpointer saves it per
+        # sender (thread_id). Default: in memory. The API passes a SQLite one so
+        # conversations survive a server restart.
+        self.checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
         self.graph = self._build_graph()
 
     # ---- nodes -----------------------------------------------------------
 
     def understand(self, state: AgentState) -> AgentState:
-        sender = state["sender"]
-        pending = self.pending.get(sender)
-        context = ""
-        if pending:
-            context = (
-                f"Earlier in this conversation the tenant asked: {pending}. "
-                "Their new message may just answer our clarifying question."
-            )
-        ex = self.llm.extract(state["message"], state["now"], context).model_dump()
+        now = state["now"]
+        pending = state.get("pending")
+        history = list(state.get("history") or [])
+        last_booking = state.get("last_booking")
+        last_seen = state.get("last_seen")
+        if last_seen is not None and now - last_seen > CONVERSATION_TTL:
+            pending, history, last_booking = None, [], None  # stale: start a new conversation
+
+        message = state["message"]
+        ex = self.llm.extract(message, now, self._context(pending, history, last_booking)).model_dump()
+        # Ground the model's output in what THIS message says. Seen live: with history in the
+        # prompt, the model copied an earlier address into "I want to cancel my viewing."
+        if ex.get("property") and not mentions(message, ex["property"]):
+            ex["property"] = None
+        if ex.get("refers_to_last_booking") and not re.search(r"\b(it|that|this|one)\b", message.lower()):
+            ex["refers_to_last_booking"] = False
         ex["preferred_time"] = _hhmm(ex.get("preferred_time"))
         ex["earliest_time"] = _hhmm(ex.get("earliest_time"))
         ex["latest_time"] = _hhmm(ex.get("latest_time"))
@@ -298,8 +330,14 @@ class ViewingAgent:
             if ex["intent"] == "book":  # "is it free?" -> "yes, book it"
                 merged["intent"] = "book"
             ex = merged
-        self.pending.pop(sender, None)
-        return {"extraction": ex}
+        return {
+            "extraction": ex,
+            "pending": pending,
+            "history": history,
+            "last_booking": last_booking,
+            # reset this turn's working values (the checkpointer keeps last turn's)
+            "property": None, "action": "", "facts": {}, "booking": None, "reply": "",
+        }
 
     def lookup(self, state: AgentState) -> AgentState:
         ex = state["extraction"]
@@ -373,9 +411,21 @@ class ViewingAgent:
 
     def cancel(self, state: AgentState) -> AgentState:
         ex, sender = state["extraction"], state["sender"]
+        last = state.get("last_booking")
+        if ex.get("refers_to_last_booking") and last and not ex.get("property"):
+            # "cancel it" right after we booked something: that booking, if it's still active.
+            if any(b["booking_id"] == last["booking_id"] for b in self.tools.active_bookings_for(sender)):
+                self.tools.cancel_booking(last["booking_id"], sender)
+                return {"action": "cancelled", "booking": last,
+                        "facts": {"address": last["address"], "starts_at": last["starts_at"]}}
         prop = None
         if ex.get("property"):
             prop = self.tools.find_property(ex["property"])
+            if prop is None:
+                # "the maple one": match against this tenant's OWN bookings only.
+                own = [b for b in self.tools.active_bookings_for(sender) if mentions(ex["property"], b["address"])]
+                if len({b["property_id"] for b in own}) == 1:
+                    prop = {"id": own[0]["property_id"], "address": own[0]["address"]}
             if prop is None:
                 return self._clarify(ex, {"reason": "unknown_property", "property_text": ex["property"],
                                           "known_properties": self._known_properties()})
@@ -400,12 +450,35 @@ class ViewingAgent:
     def reply(self, state: AgentState) -> AgentState:
         action, facts = state["action"], state.get("facts", {})
         template = template_reply(action, facts)
+        text = template
         if self.draft_with_llm:
             polished = self.llm.draft(state["message"], action, template)
             # The LLM only gets to change the wording, never the facts.
             if is_faithful(action, template, polished):
-                return {"reply": polished}
-        return {"reply": template}
+                text = polished
+        return {"reply": text, **self._remember(state, text)}
+
+    def _remember(self, state: AgentState, reply_text: str) -> dict:
+        """Update the conversation memory that the checkpointer saves for this sender."""
+        action = state["action"]
+        history = (state.get("history") or []) + [
+            {"role": "tenant", "text": state["message"]},
+            {"role": "agent", "text": reply_text},
+        ]
+        # Keep the open request while the reply invites a follow-up:
+        # a question, free times, alternatives, a fresh booking ("can I also do 16:00?").
+        keep = action in ("clarify", "answered", "no_availability", "booked", "none")
+        last_booking = state.get("last_booking")
+        if action == "booked":
+            last_booking = state["booking"]
+        elif action == "cancelled" and last_booking and state["booking"]["booking_id"] == last_booking["booking_id"]:
+            last_booking = None
+        return {
+            "pending": state["extraction"] if keep else None,
+            "history": history[-2 * HISTORY_TURNS:],
+            "last_booking": last_booking,
+            "last_seen": state["now"],
+        }
 
     # ---- helpers ---------------------------------------------------------
 
@@ -424,6 +497,20 @@ class ViewingAgent:
                 return False  # they've moved on to a different property
             # (if the earlier property was unknown, the new one is a correction: keep going)
         return True
+
+    @staticmethod
+    def _context(pending: Optional[dict], history: List[dict], last_booking: Optional[dict]) -> str:
+        """What the LLM sees about the conversation so far."""
+        parts = []
+        if history:
+            lines = "\n".join(f"  {m['role']}: {m['text']}" for m in history[-HISTORY_TURNS:])
+            parts.append(f"Conversation so far:\n{lines}")
+        if pending:
+            open_request = {k: v for k, v in pending.items() if v}
+            parts.append(f"Open request: {open_request}")
+        if last_booking:
+            parts.append(f"Booked in this conversation: {last_booking['address']} at {last_booking['starts_at']}")
+        return "\n".join(parts)
 
     def _clarify(self, ex: dict, facts: dict, prop: Optional[dict] = None) -> AgentState:
         return {"action": "clarify", "facts": facts, "property": prop, "extraction": ex}
@@ -461,19 +548,16 @@ class ViewingAgent:
         g.add_edge("cancel", "reply")
         g.add_edge("clarify_other", "reply")
         g.add_edge("reply", END)
-        return g.compile()
+        return g.compile(checkpointer=self.checkpointer)
 
     # ---- entry point -----------------------------------------------------
 
     def handle(self, sender: str, message: str, now: Optional[datetime] = None) -> dict:
-        state = self.graph.invoke({"sender": sender, "message": message, "now": now or self.clock()})
-        # Remember the open request whenever the reply invites a follow-up:
-        # a clarifying question, a list of free times, alternatives to a taken slot,
-        # or a fresh booking ("can I also do 16:00?").
-        if state["action"] in ("clarify", "answered", "no_availability", "booked", "none"):
-            self.pending[sender] = state["extraction"]
-        else:
-            self.pending.pop(sender, None)
+        # One LangGraph thread per sender: the checkpointer restores their conversation.
+        state = self.graph.invoke(
+            {"sender": sender, "message": message, "now": now or self.clock()},
+            config={"configurable": {"thread_id": f"sender:{sender}"}},
+        )
         return {
             "reply": state["reply"],
             "action": state["action"],

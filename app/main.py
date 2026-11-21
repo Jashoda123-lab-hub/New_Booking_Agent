@@ -5,6 +5,7 @@ GET  /bookings    all current (active) bookings with property and time
 GET  /properties  properties with their free slots (for the web page)
 GET  /            a small web page to chat with the agent and watch bookings
 """
+import os
 from datetime import timedelta
 from pathlib import Path
 from typing import List, Literal, Optional
@@ -22,6 +23,18 @@ from .tools import BookingTools
 load_dotenv()
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def make_checkpointer():
+    """LangGraph checkpointer that stores each sender's conversation in a SQLite file."""
+    import sqlite3
+
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    path = os.getenv("CONVERSATIONS_DB", "conversations.db")
+    saver = SqliteSaver(sqlite3.connect(path, check_same_thread=False))
+    saver.setup()
+    return saver
 
 
 class MessageIn(BaseModel):
@@ -55,7 +68,8 @@ def create_app(agent: Optional[ViewingAgent] = None, database_url: Optional[str]
     if agent is None:
         engine = make_engine(database_url)
         init_db(engine)
-        agent = ViewingAgent(BookingTools(sessionmaker(bind=engine)), make_llm())
+        agent = ViewingAgent(BookingTools(sessionmaker(bind=engine)), make_llm(),
+                             checkpointer=make_checkpointer())
 
     app = FastAPI(title="Viewing Booking Agent", version="1.0")
     app.state.agent = agent

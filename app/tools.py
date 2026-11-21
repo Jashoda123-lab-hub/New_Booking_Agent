@@ -29,6 +29,26 @@ def _normalise(text: str) -> str:
     return " ".join(_ABBREVIATIONS.get(w, w) for w in words)
 
 
+_GENERIC = {"road", "street", "avenue", "lane", "drive", "the", "flat", "house", "one", "at", "on", "in"}
+
+
+def distinctive_words(text: str) -> set:
+    """Words that identify an address: house numbers and street names, not 'road' / 'street'."""
+    return {w for w in _normalise(text).split() if w not in _GENERIC and (w.isdigit() or len(w) > 2)}
+
+
+def mentions(message: str, address_text: str) -> bool:
+    """Does the message itself name this address (or a distinctive part of it)?"""
+    msg = distinctive_words(message)
+    for w in distinctive_words(address_text):
+        if w in msg or (not w.isdigit() and any(
+            len(m) > 3 and (sorted(m) == sorted(w) or difflib.SequenceMatcher(None, m, w).ratio() >= 0.8)
+            for m in msg
+        )):
+            return True
+    return False
+
+
 def _slot_dict(slot: ViewingSlot, prop: Property) -> dict:
     return {
         "slot_id": slot.id,

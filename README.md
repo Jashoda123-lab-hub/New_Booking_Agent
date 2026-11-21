@@ -42,6 +42,24 @@ moment, both may see the slot as free, but only one `INSERT` can succeed. The ot
 which `book_slot` turns into "slot taken". Cancelling sets `status = 'cancelled'`, which frees the slot without
 deleting history.
 
+### Conversation memory
+
+Each sender is one LangGraph **thread** (`thread_id = sender:<name>`). The graph state holds the conversation
+memory, and a **SQLite checkpointer** (`conversations.db`) saves it after every message, so it survives a
+server restart:
+
+| State key | Used for |
+|---|---|
+| `pending` | The open request, so short follow-ups work: "Is 14 Oak Road free on Tuesday?" → "yes book at 10:00" |
+| `history` | The last 6 messages, given to the LLM as context |
+| `last_booking` | The booking made in this conversation, so "cancel it" / "cancel that one" works |
+| `last_seen` | After 30 minutes of silence the conversation starts fresh |
+
+Code checks the model's output before using it. An address only counts if **this** message names it (so an
+address from the history can't sneak into "I want to cancel my viewing."), "cancel it" only counts if the message
+says "it" / "that one", and when cancelling, a partial name like "the maple one" is matched only against the
+tenant's own bookings.
+
 ## Setup
 
 Requires Python 3.9+.
@@ -135,7 +153,7 @@ Sanity check: if you remove the unique index from `app/db.py`, the two DB-level 
 app/
   db.py        models, partial unique index, seed data
   tools.py     find_property, get_free_slots, book_slot, active_bookings_for, cancel_booking, list_bookings
-  agent.py     LangGraph graph, LLM prompts, reply templates
+  agent.py     LangGraph graph, conversation memory, LLM prompts, reply templates
   main.py      FastAPI app (POST /message, GET /bookings, GET /properties, GET /health, GET /)
   static/      index.html: simple chat page (plain HTML + JS)
   reset_db.py  recreate and seed the database

@@ -349,3 +349,106 @@ def test_web_page_and_properties_endpoint(client, llm):
 def test_message_validation(client):
     assert client.post("/message", json={"sender": "alice"}).status_code == 422
     assert client.post("/message", json={"sender": "", "text": "hi"}).status_code == 422
+
+
+# conversation memory (LangGraph checkpointer) -----------------------------------
+
+def test_conversation_survives_a_server_restart(tools, llm, tmp_path):
+    """Memory is saved by a SQLite checkpointer, so a restart doesn't forget the open request."""
+    import sqlite3
+    from datetime import timedelta
+
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    from app.agent import ViewingAgent
+
+    def fresh_agent():  # a new process: new agent object, same conversations file
+        saver = SqliteSaver(sqlite3.connect(str(tmp_path / "conv.db"), check_same_thread=False))
+        saver.setup()
+        return ViewingAgent(tools, llm, clock=lambda: NOW, checkpointer=saver)
+
+    q = llm.when("Is 14 Oak Road free on Tuesday?", intent="question", property="14 Oak Road", date="2026-11-24")
+    assert fresh_agent().handle("guest", q)["action"] == "answered"
+
+    yes = llm.when("yes book at 10:00", intent="book", preferred_time="10:00")
+    out = fresh_agent().handle("guest", yes, now=NOW + timedelta(minutes=2))
+    assert out["action"] == "booked"
+    assert (out["booking"]["address"], out["booking"]["starts_at"]) == ("14 Oak Road", "2026-11-24 10:00")
+
+
+def test_stale_conversation_is_forgotten(agent, llm):
+    from datetime import timedelta
+
+    agent.handle("guest", llm.when("Is 14 Oak Road free on Tuesday?",
+                                   intent="question", property="14 Oak Road", date="2026-11-24"), now=NOW)
+    yes = llm.when("yes book at 10:00", intent="book", preferred_time="10:00")
+    out = agent.handle("guest", yes, now=NOW + timedelta(minutes=31))
+    assert out["action"] == "clarify"  # 31 minutes later: which property?
+    assert agent.tools.list_bookings() == []
+
+
+def test_each_sender_has_their_own_conversation(client, llm):
+    send(client, "alice", llm.when("Is 14 Oak Road free on Tuesday?",
+                                   intent="question", property="14 Oak Road", date="2026-11-24"))
+    out = send(client, "bob", llm.when("yes book at 10:00", intent="book", preferred_time="10:00"))
+    assert out["action"] == "clarify"
+    assert client.get("/bookings").json() == []
+
+
+def test_cancel_it_cancels_the_booking_just_made(client, llm):
+    llm.when("Book 22 Elm Street tomorrow at 4pm",
+             intent="book", property="22 Elm Street", date="2026-11-22", preferred_time="16:00")
+    llm.when("Book 14 Oak Road Saturday at 10am please",
+             intent="book", property="14 Oak Road", date="2026-11-28", preferred_time="10:00")
+    send(client, "alice", "Book 22 Elm Street tomorrow at 4pm")
+    send(client, "alice", "Book 14 Oak Road Saturday at 10am please")
+
+    out = send(client, "alice", llm.when("actually, cancel it", intent="cancel", refers_to_last_booking=True))
+    assert out["action"] == "cancelled"
+    assert out["booking"]["address"] == "14 Oak Road"  # the one just booked, not the Elm Street one
+    assert [b["address"] for b in client.get("/bookings").json()] == ["22 Elm Street"]
+
+    # Saying it again: nothing recent left to point at, so ask instead of guessing.
+    out = send(client, "alice", llm.when("cancel it", intent="cancel", refers_to_last_booking=True))
+    assert out["action"] == "clarify"
+    assert len(client.get("/bookings").json()) == 1
+
+
+def test_llm_sees_recent_conversation(client, llm):
+    send(client, "alice", llm.when("Is 14 Oak Road free on Tuesday?",
+                                   intent="question", property="14 Oak Road", date="2026-11-24"))
+    send(client, "alice", llm.when("yes book at 10:00", intent="book", preferred_time="10:00"))
+    ctx = llm.contexts[-1]
+    assert "Conversation so far" in ctx
+    assert "tenant: Is 14 Oak Road free on Tuesday?" in ctx
+    assert "Open request" in ctx and "14 Oak Road" in ctx
+
+
+def test_address_copied_from_history_is_ignored(client, llm):
+    """Live bug: the model put the last-booked address into 'I want to cancel my viewing.'"""
+    llm.when("Book 22 Elm Street tomorrow at 4pm",
+             intent="book", property="22 Elm Street", date="2026-11-22", preferred_time="16:00")
+    llm.when("Book 7 Maple Avenue on Monday at 11",
+             intent="book", property="7 Maple Avenue", date="2026-11-23", preferred_time="11:00")
+    send(client, "alice", "Book 22 Elm Street tomorrow at 4pm")
+    send(client, "alice", "Book 7 Maple Avenue on Monday at 11")
+
+    out = send(client, "alice", llm.when("I want to cancel my viewing.", intent="cancel",
+                                         property="7 Maple Avenue", refers_to_last_booking=True))
+    assert out["action"] == "clarify"  # two bookings, nothing named: ask
+    assert len(client.get("/bookings").json()) == 2
+
+    # "the maple one" is matched against alice's own bookings.
+    out = send(client, "alice", llm.when("the maple one", intent="other", property="maple"))
+    assert out["action"] == "cancelled"
+    assert out["booking"]["address"] == "7 Maple Avenue"
+    assert [b["address"] for b in client.get("/bookings").json()] == ["22 Elm Street"]
+
+
+def test_partial_name_never_matches_someone_elses_or_unknown_property(client, llm):
+    llm.when("Book 22 Elm Street tomorrow at 4pm",
+             intent="book", property="22 Elm Street", date="2026-11-22", preferred_time="16:00")
+    send(client, "alice", "Book 22 Elm Street tomorrow at 4pm")
+    out = send(client, "alice", llm.when("cancel the maple one", intent="cancel", property="maple"))
+    assert out["action"] == "clarify"  # alice has no Maple booking
+    assert len(client.get("/bookings").json()) == 1
