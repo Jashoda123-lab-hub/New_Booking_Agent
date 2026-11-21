@@ -197,6 +197,59 @@ def test_yes_book_it_after_an_availability_answer(client, llm):
     assert (out["booking"]["address"], out["booking"]["starts_at"]) == ("14 Oak Road", "2026-11-24 10:00")
 
 
+def test_follow_ups_after_a_booking(client, llm):
+    """Real conversation from the web page: repeating 'yes book at 11:00' after it was booked."""
+    send(client, "guest", llm.when("Is 14 Oak Road free on Tuesday?",
+                                   intent="question", property="14 Oak Road", date="2026-11-24"))
+    book_11 = llm.when("yes book at 11:00", intent="book", preferred_time="11:00")
+    assert send(client, "guest", book_11)["action"] == "booked"
+
+    out = send(client, "guest", book_11)  # asked again
+    assert out["action"] == "none"
+    assert "already booked" in out["reply"] and "11:00" in out["reply"]
+    assert len(client.get("/bookings").json()) == 1
+
+    out = send(client, "guest", llm.when("can I also do 16:00?", intent="book", preferred_time="16:00"))
+    assert out["action"] == "booked"
+    assert out["booking"]["starts_at"] == "2026-11-24 16:00"
+
+    # someone else asking for my slot still gets "not available", not "already booked"
+    out = send(client, "bob", llm.when("Book 14 Oak Road on Tuesday at 11",
+                                       intent="book", property="14 Oak Road", date="2026-11-24", preferred_time="11:00"))
+    assert out["action"] == "no_availability"
+
+
+def test_exact_time_is_never_swapped_for_another_time(client, llm):
+    """Live bug: the model tagged 'book at 11:00' as morning too, and a repeat booked 10:00."""
+    send(client, "guest", llm.when("Is 22 Elm Street free on Wednesday?",
+                                   intent="question", property="22 Elm Street", date="2026-11-25"))
+    again = llm.when("yes book at 11:00", intent="book", preferred_time="11:00", time_of_day="morning")
+    out = send(client, "guest", again)
+    assert (out["action"], out["booking"]["starts_at"]) == ("booked", "2026-11-25 11:00")
+
+    out = send(client, "guest", again)
+    assert out["action"] == "none" and "already booked" in out["reply"]
+    assert [b["starts_at"] for b in client.get("/bookings").json()] == ["2026-11-25 11:00"]
+
+    # Someone else asking for 11:00 "in the morning" is offered alternatives, not silently given 10:00.
+    out = send(client, "bob", llm.when("Book 22 Elm Street Wednesday at 11am", intent="book",
+                                       property="22 Elm Street", date="2026-11-25",
+                                       preferred_time="11:00", time_of_day="morning"))
+    assert out["action"] == "no_availability"
+    assert len(client.get("/bookings").json()) == 1
+
+
+def test_new_time_replaces_old_window(client, llm):
+    """After 'Saturday morning' was booked, 'also 16:00' (taken) must not fall back to the morning."""
+    send(client, "alice", llm.when("14 Oak Road Saturday morning", intent="book",
+                                   property="14 Oak Road", date="2026-11-28", time_of_day="morning"))
+    send(client, "bob", llm.when("Book 14 Oak Road Saturday at 4pm", intent="book",
+                                 property="14 Oak Road", date="2026-11-28", preferred_time="16:00"))
+    out = send(client, "alice", llm.when("can I also do 16:00?", intent="book", preferred_time="16:00"))
+    assert out["action"] == "no_availability"
+    assert [b["contact"] for b in client.get("/bookings").json()] == ["alice", "bob"]
+
+
 def test_taking_an_offered_alternative(client, llm):
     msg = llm.when("Book 14 Oak Road Saturday at 10am please",
                    intent="book", property="14 Oak Road", date="2026-11-28", preferred_time="10:00")

@@ -54,6 +54,7 @@ class Extraction(BaseModel):
 
 # Parts of the day are mapped in code, not left to the model (it skipped this in live runs).
 TIME_OF_DAY = {"morning": ("08:00", "12:00"), "afternoon": ("12:00", "17:00"), "evening": ("17:00", "21:00")}
+TIME_KEYS = ("preferred_time", "earliest_time", "latest_time")
 
 
 class AgentState(TypedDict, total=False):
@@ -222,6 +223,11 @@ def template_reply(action: str, facts: dict) -> str:
                 f"The nearest free slots are {times}. Shall I book one of those?"
             )
         return f"Sorry, {facts['address']} has no free viewing slots in the next week."
+    if action == "none" and reason == "already_booked":
+        return (
+            f"You're already booked for {facts['address']} on {human_time(facts['starts_at'])}. "
+            "Reply here if you need to change it."
+        )
     if action == "none" and reason == "no_bookings":
         return "I couldn't find an active viewing booked under your contact. Is it under a different name or number?"
     # clarify
@@ -278,12 +284,16 @@ class ViewingAgent:
         ex["earliest_time"] = _hhmm(ex.get("earliest_time"))
         ex["latest_time"] = _hhmm(ex.get("latest_time"))
         part = ex.pop("time_of_day", None)
-        if part in TIME_OF_DAY and not (ex["earliest_time"] or ex["latest_time"]):
+        # An exact time wins: "book at 11:00" must not become "any time this morning".
+        if part in TIME_OF_DAY and not (ex["preferred_time"] or ex["earliest_time"] or ex["latest_time"]):
             ex["earliest_time"], ex["latest_time"] = TIME_OF_DAY[part]
 
         # Merge a follow-up ("14 Oak Road", "yes, book 10:00") into the open request.
         if pending and self._continues(pending, ex):
             merged = dict(pending)
+            if any(ex.get(k) for k in TIME_KEYS):
+                # A new time replaces the old one completely (no stale "morning" fallback).
+                merged.update({k: None for k in TIME_KEYS})
             merged.update({k: v for k, v in ex.items() if v is not None and k != "intent"})
             if ex["intent"] == "book":  # "is it free?" -> "yes, book it"
                 merged["intent"] = "book"
@@ -328,7 +338,14 @@ class ViewingAgent:
         chosen = None
         if ex.get("preferred_time"):
             chosen = next((s for s in free if s["starts_at"].endswith(ex["preferred_time"])), None)
+            if chosen is None:
+                # Not free — is that because this tenant already has it? Say so; never book another time.
+                wanted = f"{day:%Y-%m-%d} {ex['preferred_time']}"
+                if any(b["starts_at"] == wanted for b in self.tools.active_bookings_for(state["sender"], prop["id"])):
+                    return {"property": prop, "action": "none",
+                            "facts": {"reason": "already_booked", "address": prop["address"], "starts_at": wanted}}
         if chosen is None and (ex.get("earliest_time") or ex.get("latest_time")):
+            # Only reached when the tenant gave a window themselves ("if not, any time after 4").
             ws, we = window_start.strftime("%Y-%m-%d %H:%M"), window_end.strftime("%Y-%m-%d %H:%M")
             chosen = next((s for s in free if ws <= s["starts_at"] < we), None)
 
@@ -451,9 +468,12 @@ class ViewingAgent:
     def handle(self, sender: str, message: str, now: Optional[datetime] = None) -> dict:
         state = self.graph.invoke({"sender": sender, "message": message, "now": now or self.clock()})
         # Remember the open request whenever the reply invites a follow-up:
-        # a clarifying question, a list of free times, or alternatives to a taken slot.
-        if state["action"] in ("clarify", "answered", "no_availability"):
+        # a clarifying question, a list of free times, alternatives to a taken slot,
+        # or a fresh booking ("can I also do 16:00?").
+        if state["action"] in ("clarify", "answered", "no_availability", "booked", "none"):
             self.pending[sender] = state["extraction"]
+        else:
+            self.pending.pop(sender, None)
         return {
             "reply": state["reply"],
             "action": state["action"],
