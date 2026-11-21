@@ -223,6 +223,22 @@ def test_is_faithful_checks():
 
 # API shape ---------------------------------------------------------------------
 
+def test_web_page_and_properties_endpoint(client, llm):
+    page = client.get("/")
+    assert page.status_code == 200 and "Viewing Booking Agent" in page.text
+
+    props = client.get("/properties").json()
+    assert [p["address"] for p in props] == ["14 Oak Road", "22 Elm Street", "7 Maple Avenue"]
+    oak_before = len(props[0]["free_slots"])
+    assert oak_before == 28  # 7 days x 4 slots
+
+    send(client, "alice", llm.when("Book 14 Oak Road Saturday at 10am please",
+                                   intent="book", property="14 Oak Road", date="2026-11-28", preferred_time="10:00"))
+    oak = client.get("/properties").json()[0]["free_slots"]
+    assert len(oak) == oak_before - 1
+    assert "2026-11-28 10:00" not in [s["starts_at"] for s in oak]
+
+
 def test_message_validation(client):
     assert client.post("/message", json={"sender": "alice"}).status_code == 422
     assert client.post("/message", json={"sender": "", "text": "hi"}).status_code == 422

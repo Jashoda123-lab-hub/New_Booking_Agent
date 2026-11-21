@@ -162,6 +162,13 @@ class BookingTools:
             s.commit()
             return {"ok": result.rowcount == 1, "booking_id": booking_id}
 
+    def list_properties(self) -> List[dict]:
+        with self.Session() as s:
+            return [
+                {"id": p.id, "address": p.address, "city": p.city}
+                for p in s.scalars(select(Property).order_by(Property.id))
+            ]
+
     # used by GET /bookings ---------------------------------------------
     def list_bookings(self) -> List[dict]:
         stmt = (

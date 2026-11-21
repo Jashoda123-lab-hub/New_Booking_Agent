@@ -1,12 +1,17 @@
 """FastAPI service.
 
-POST /message   {"sender": "...", "text": "..."}  ->  reply + action taken
-GET  /bookings  all current (active) bookings with property and time
+POST /message     {"sender": "...", "text": "..."}  ->  reply + action taken
+GET  /bookings    all current (active) bookings with property and time
+GET  /properties  properties with their free slots (for the web page)
+GET  /            a small web page to chat with the agent and watch bookings
 """
+from datetime import timedelta
+from pathlib import Path
 from typing import List, Literal, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import sessionmaker
 
@@ -15,6 +20,8 @@ from .db import init_db, make_engine
 from .tools import BookingTools
 
 load_dotenv()
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 class MessageIn(BaseModel):
@@ -64,9 +71,24 @@ def create_app(agent: Optional[ViewingAgent] = None, database_url: Optional[str]
     def get_bookings(agent: ViewingAgent = Depends(get_agent)):
         return agent.tools.list_bookings()
 
+    @app.get("/properties")
+    def get_properties(days: int = 7, agent: ViewingAgent = Depends(get_agent)):
+        """Each property with its free slots over the next `days` days (used by the web page)."""
+        now = agent.clock()
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        days = max(1, min(days, 31))
+        return [
+            {**p, "free_slots": agent.tools.get_free_slots(p["id"], start, start + timedelta(days=days + 1), now)}
+            for p in agent.tools.list_properties()
+        ]
+
     @app.get("/health")
     def health():
         return {"status": "ok"}
+
+    @app.get("/", include_in_schema=False)
+    def index():
+        return FileResponse(STATIC_DIR / "index.html")
 
     return app
 
