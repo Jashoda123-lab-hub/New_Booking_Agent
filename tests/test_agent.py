@@ -186,6 +186,16 @@ def test_vague_request_gets_a_clarifying_question(client, llm):
     assert client.get("/bookings").json() == []
 
 
+def test_day_but_no_time_asks_only_for_the_time(client, llm):
+    out = send(client, "alice", llm.when("Can I view 7 Maple Avenue on Monday?",
+                                         intent="book", property="7 Maple Avenue", date="2026-11-23"))
+    assert out["action"] == "clarify"
+    assert "what day" not in out["reply"].lower()
+    assert "Monday 23 Nov" in out["reply"] and "10:00" in out["reply"]
+    assert out["reply"].endswith("?")
+    assert client.get("/bookings").json() == []
+
+
 def test_property_but_no_time_asks_for_a_time(client, llm):
     out = send(client, "alice", llm.when("Can I view 7 Maple Avenue?", intent="book", property="7 Maple Avenue"))
     assert out["action"] == "clarify"

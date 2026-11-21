@@ -238,6 +238,11 @@ def template_reply(action: str, facts: dict) -> str:
         return f"Happy to help. Which property was the viewing for? You have: {options}."
     if reason == "no_time":
         free = facts.get("free") or []
+        if facts.get("day"):
+            times = ", ".join(s[11:] for s in free)
+            if not times:
+                return f"Sorry, {facts['address']} has no free viewing slots on {facts['day']}. Would another day suit you?"
+            return f"{facts['address']} has free slots on {facts['day']} at {times}. Which time would suit you?"
         hint = f" Free times include {', '.join(human_time(s) for s in free)}." if free else ""
         return f"Happy to help with {facts['address']}. What day and time would suit you?{hint}"
     return "Thanks for your message! Would you like to book a viewing or cancel one? Please tell me the property and a time."
@@ -311,6 +316,7 @@ class ViewingAgent:
                 return {"property": prop, "action": "answered",
                         "facts": {"address": prop["address"], "free": [s["starts_at"] for s in free[:4]]}}
             return self._clarify(ex, {"reason": "no_time", "address": prop["address"],
+                                      "day": f"{day:%A} {day.day} {day:%b}" if day else None,
                                       "free": [s["starts_at"] for s in free[:3]]}, prop)
 
         window_start = _at(day, ex.get("earliest_time") or ex.get("preferred_time") or "00:00")

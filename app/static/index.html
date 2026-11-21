@@ -25,6 +25,10 @@
          color: var(--muted); margin-bottom: 3px; }
   .body { white-space: pre-wrap; }
   .hint { color: var(--muted); margin: auto; text-align: center; }
+  .suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .suggestions button { font-weight: 400; font-size: 13px; padding: 6px 12px; border-radius: 999px;
+                        background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+  .suggestions button:hover { border-color: var(--accent); }
   form { display: flex; gap: 8px; margin-top: 12px; }
   input { flex: 1; font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
           background: var(--panel); color: var(--text); }
@@ -37,6 +41,7 @@
 <div class="chat">
   <h1>Viewing Booking Agent</h1>
   <div class="log" id="log"><div class="hint" id="hint">Ask to book or cancel a property viewing.</div></div>
+  <div class="suggestions" id="suggestions"></div>
   <form id="form">
     <input id="text" placeholder="e.g. Can I see 14 Oak Road on Saturday morning?" autocomplete="off" aria-label="Message">
     <button id="send">Send</button>
@@ -65,9 +70,29 @@ function add(cls, text) {
   return body;
 }
 
-document.getElementById("form").addEventListener("submit", async (e) => {
+const SUGGESTIONS = [
+  "Hi, can I see the flat at 14 Oak Road on Saturday morning?",
+  "Is 22 Elm Street free tomorrow at 5pm? If not, any time after 4 works.",
+  "Is 7 Maple Avenue free on Monday?",
+  "I want to cancel my viewing.",
+  "Can I see 99 Banana Street tomorrow at 10?",
+  "I'd like to book a viewing",
+];
+for (const q of SUGGESTIONS) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = q;
+  b.onclick = () => { if (!button.disabled) send(q); };
+  document.getElementById("suggestions").append(b);
+}
+
+document.getElementById("form").addEventListener("submit", (e) => {
   e.preventDefault();
-  const text = input.value.trim();
+  send(input.value);
+});
+
+async function send(text) {
+  text = text.trim();
   if (!text) return;
   add("you", text);
   input.value = "";
@@ -85,7 +110,7 @@ document.getElementById("form").addEventListener("submit", async (e) => {
   }
   button.disabled = false;
   input.focus();
-});
+}
 input.focus();
 </script>
 </body>
